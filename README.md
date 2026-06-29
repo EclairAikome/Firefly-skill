@@ -4,6 +4,12 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) ![version](https://img.shields.io/badge/version-1.0.0-brightgreen)
 
+<p align="center">
+  <img src="FIREFLY.jpg" alt="Firefly" width="360">
+  <br>
+  <sub>Artwork © <b>@degrees_25</b> — all rights reserved.</sub>
+</p>
+
 ---
 
 ## The grind it kills
@@ -43,7 +49,7 @@ MIT. See [LICENSE](LICENSE).
 ---
 ---
 
-# 🦋 Firefly-skill（中文）
+# 🦋 Firefly-skill
 
 **一个帮你自动跑 LinkedIn 求职的 [Claude Code](https://claude.com/claude-code) skill：搜索、筛选、导出一份按匹配度排好序的清单。全自动，只读不投递。**
 
