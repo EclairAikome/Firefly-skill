@@ -1,0 +1,9 @@
+# runtime state (per-run workspaces and the persistent dedupe library)
+state/master_jobs.jsonl
+state/run_*/
+# python
+__pycache__/
+*.pyc
+# os
+.DS_Store
+Thumbs.db
