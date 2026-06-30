@@ -90,6 +90,12 @@ for jid, c in cands.items():
     if not txt:
         dropped.append({"jid": jid, "company": c["company"], "title": c["title"], "reason": "no_detail"})
         continue
+    # Defense in depth against the SPA off-by-one read: if the saved body does not actually
+    # describe this candidate, it captured a neighbouring job. Never emit that as this job's JD;
+    # drop it so verify_details.py / a re-read can recover it instead of shipping wrong data.
+    if not L.identity_in_text(c["company"], c["title"], txt):
+        dropped.append({"jid": jid, "company": c["company"], "title": c["title"], "reason": "corrupt_read"})
+        continue
     miny, ev = L.min_required_years(txt)
     sg = L.is_singapore(c.get("loc", ""), c["title"], txt)
     mlm = L.is_direct_sales_mlm(c["company"], c["title"], txt)

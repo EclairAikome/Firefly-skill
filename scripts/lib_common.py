@@ -29,6 +29,35 @@ def clean_title(t):
     return re.sub(r"\s+with verification\s*$", "", (t or "").strip())
 
 
+def identity_in_text(company, title, txt, head=400):
+    """True iff the detail BODY actually describes this (company, title) job.
+
+    A LinkedIn job detail page opens with "<company><job title> <location> · <posted> ...".
+    A correctly-read page therefore contains the candidate's own company and the leading words
+    of its title near the top. If it does not, the read captured a DIFFERENT job (the SPA
+    off-by-one race) and the file must be rejected — never written to the workbook as this job.
+
+    Tuned against the full captured corpus: flags exactly the cross-talk files, passes the rest.
+    """
+    h = norm(txt[:head] if txt else "")
+    if not h:
+        return False
+    c, t = norm(company), norm(title)
+    # The company name (when distinctive enough) must appear in the header region.
+    if len(c) >= 4 and c not in h:
+        return False
+    # And a solid leading chunk of the title must appear too (guards short company names and
+    # the rare case where two roles share a company).
+    frag = t[:20]
+    if len(frag) >= 6 and frag not in h:
+        return False
+    # If both signals are too weak to judge (tiny company AND tiny title), fall back to requiring
+    # at least one of them to be present so we never silently accept an unrelated page.
+    if len(c) < 4 and len(frag) < 6:
+        return (c and c in h) or (frag and frag in h)
+    return True
+
+
 # ---------- dates ----------
 _REL = re.compile(r"·\s*(?:Reposted\s*)?(\d+)\s*(minute|hour|day|week|month)s?\s*ago", re.I)
 _UNIT_DAYS = {"minute": 0, "hour": 0, "day": 1, "week": 7, "month": 30}

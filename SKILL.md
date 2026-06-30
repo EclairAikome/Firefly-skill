@@ -140,11 +140,27 @@ powershell -ExecutionPolicy Bypass -File "<SKILL_DIR>\scripts\watchdog_install.p
 Get `<browser_id>` from `browser-act browser list`. The watchdog reads `details/` vs
 `candidates.json` to track progress, so it is safe to install/remove at any time.
 
+### Phase 5.5 — verify detail integrity (MANDATORY gate before parse)
+`/jobs/view/<id>/` is an in-place SPA route change: the URL updates immediately but the detail
+pane re-renders a navigation cycle later, so a too-early read saves a *neighbouring* job's JD
+under the wrong id (silent crosstalk — a wrong JD shown under the right company). `read_details.sh`
+now settles + verifies each page, but always run the gate before parsing:
+```bash
+PYTHONUTF8=1 python "<SKILL_DIR>\scripts\verify_details.py" --run "<RUN_DIR>" --delete
+```
+It re-derives each file's true owner from its own body and **deletes** any file whose body does
+not describe its id (and any empty file). It exits non-zero while corruption/gaps remain. Loop
+`read_details.sh` (re-fetches exactly the deleted ids, idempotently) → `verify_details.py` until
+it exits 0. Only then proceed. Never build the workbook while this gate is red.
+
 ### Phase 6 — rule filter + parse (deterministic)
 ```bash
 PYTHONUTF8=1 uv run --with pyyaml python "<SKILL_DIR>\scripts\parse_details.py" \
   --config "<SKILL_DIR>\config.yaml" --run "<RUN_DIR>" --out "<RUN_DIR>\kept_candidates.json"
 ```
+`parse_details.py` independently re-checks identity and drops any still-mismatched file as
+`corrupt_read` (defense in depth) so a wrong JD can never reach the workbook even if the gate
+was skipped.
 **Always run this script — do not hand-filter years/Singapore/MLM by eye.** The noise-handling
 (ignoring LinkedIn's auto skill tags like `• 3+ years of work experience with <skill>`, plus
 `X year growth` and `median tenure` lines) is exactly what a manual read gets wrong: it will
@@ -216,6 +232,10 @@ but agent scoring is better when a session is interactive.
   in company names and JDs).
 - **FileNotFoundError on `/c/...`** -> you passed an MSYS path to Python. Use a Windows path.
 - **Tool timeout mid detail-read** -> just re-run `read_details.sh`; it resumes.
+- **JD text belongs to a different company (crosstalk)** -> the SPA off-by-one read. The reader
+  settles (header stable across two reads) + verifies identity + bounces through a neutral page on
+  retry; `verify_details.py --delete` then re-fetches any that still slipped. If a single page
+  refuses to verify after retries it is left UNREAD (fail closed) — better a gap than a wrong JD.
 
 ## Reference files
 - `references/linkedin_params.md` — search URL params (geoId, f_E, f_TPR, sortBy).
