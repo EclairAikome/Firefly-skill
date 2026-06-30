@@ -21,10 +21,12 @@ MASTER = os.path.join(SKILL_DIR, "state", "master_jobs.jsonl")
 ap = argparse.ArgumentParser()
 ap.add_argument("--config", required=True)
 ap.add_argument("--run", required=True)
+ap.add_argument("--date", default=None, help="override the run date (YYYY-MM-DD); default today. "
+                "Use the scrape date when rebuilding an earlier run so the filename/Summary match.")
 a = ap.parse_args()
 cfg = L.load_config(a.config)
 run = a.run
-today = datetime.date.today()
+today = datetime.date.fromisoformat(a.date) if a.date else datetime.date.today()
 
 kept = L.read_json(os.path.join(run, "kept_candidates.json"))
 scores = {}

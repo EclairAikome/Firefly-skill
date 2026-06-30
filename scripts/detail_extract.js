@@ -11,5 +11,10 @@
   // Cap high enough to hold a fully-expanded JD (the "see more" toggle must be clicked first,
   // see click_seemore.js). 7000 was too tight and clipped long descriptions.
   txt = txt.replace(/[ \t]+/g, ' ').slice(0, 16000);
-  return JSON.stringify({ title, txt });
+  // Listing liveness (S1): record whether the posting is removed/closed so the parser can drop
+  // dead/ghost listings. Read from the rendered apply area; the parser also re-derives this from txt.
+  let status = 'open';
+  if (/job posting (?:may not be valid|has been removed|is no longer available)|unable to load the page/i.test(txt)) status = 'removed';
+  else if (/no longer accepting applications/i.test(txt)) status = 'closed';
+  return JSON.stringify({ title, status, txt });
 })()

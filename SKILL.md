@@ -175,6 +175,25 @@ This applies the hard rules and writes both kept and dropped (with reasons). The
   foreign-only postings are out.
 - **Direct-sales / MLM -> drop** (toggle `drop_direct_sales_mlm`). Pattern-matched on company
   name and copy (e.g. "Organisation", "Marketing Group", "invest in yourself", commission-only).
+- **Contract / part-time -> drop** (toggles `drop_contract` / `drop_part_time`). Read the header
+  employment type ("On-site/Hybrid <Full-time|Contract|Part-time|Internship>") + title qualifiers,
+  NOT the bare word "contract" in the body (which would wrongly drop a permanent "Contracts Manager").
+- **Dead / ghost listing -> drop (S1+S3).** A fake/phishing/ghost posting is usually dead by the
+  time the shortlist is read. `removed` (404 / "job posting has been removed", toggle `drop_removed`)
+  and `closed` ("no longer accepting applications", toggle `drop_closed`) are dropped outright; a
+  listing closed within `fast_close_hours` (default 48h) of being posted is dropped as
+  `ghost_fast_close` (resume-harvesting pattern, e.g. "posted 1 day ago" + already closed).
+
+### Phase 6.5 — liveness re-check before build (S2, needs the live session)
+Listings die fast: one live at scrape time is often closed/removed by the time the workbook is
+opened. While the browser session is still up, re-ping every KEPT job and drop the ones that died.
+```bash
+bash "<SKILL_DIR>\scripts\recheck_live.sh" "<SKILL_DIR>" "<RUN_DIR>" <session> [BROWSER_ID]
+PYTHONUTF8=1 python "<SKILL_DIR>\scripts\apply_live_status.py" --run "<RUN_DIR>"
+```
+`recheck_live.sh` writes `live_status.tsv` (open/closed/removed per kept id); `apply_live_status.py`
+removes `closed`/`removed` jobs (reasons `closed_at_build` / `removed_at_build`) and keeps the rest.
+It **fails open**: an `unknown`/flaky re-ping is never dropped — only a positive dead signal drops a job.
 
 ### Phase 7 — score fit (YOU, in context)
 Read `kept_candidates.json`. For each kept job, read its `jd` and `req` and judge fit against

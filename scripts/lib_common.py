@@ -145,6 +145,91 @@ def is_senior_title(title):
     return bool(_SENIOR.search(title or ""))
 
 
+# ---------- employment type (full-time vs contract / part-time) ----------
+# LinkedIn's job header reads "<Company><Title> <loc> · <posted> · <N> applicants ... <WorkMode>
+# <EmploymentType> <Apply/Save>", e.g. "Hybrid Full-time Easy Apply", "On-site Contract Apply",
+# "Hybrid Internship Easy Apply". The employment type is sandwiched between the work mode
+# (On-site/Hybrid/Remote) and the Apply/Save action, so we read it from there (reliable) rather
+# than from the word "contract" appearing anywhere in the JD body (which would catch "sales
+# contracts" or a permanent "Contracts Manager" role).
+_EMP_AFTER_MODE = re.compile(
+    r"\b(?:on-?site|hybrid|remote)\s+(full-time|part-time|contract|temporary|internship|volunteer|other)\b", re.I)
+_EMP_BEFORE_ACT = re.compile(
+    r"\b(full-time|part-time|contract|temporary|internship|volunteer)\b\s*(?:easy apply|apply|save)\b", re.I)
+# Title qualifiers that mark a fixed-term role even when the header is missing/ambiguous:
+#   "(1 year contract)", "(Full-time Contract - 12 Months)", "12 Months Contract", "fixed-term".
+# Note: bare "contract" alone is NOT used (would wrongly hit permanent "Contract/Contracts Manager").
+_CONTRACT_TITLE = re.compile(
+    r"\(\s*[^)]*\bcontract\b[^)]*\)|"
+    r"\b\d+\s*(?:month|months|mth|mths|year|years|yr|yrs)[\s-]*contract\b|"
+    r"\bcontract\b\s*[-–—]\s*\d+\s*(?:month|months|year|years)\b|"
+    r"\bfixed[\s-]term\b", re.I)
+_PARTTIME = re.compile(r"\bpart[\s-]?time\b", re.I)
+
+
+def employment_type(title, txt):
+    """Return the LinkedIn employment type token (lowercased) read from the header, or None."""
+    head = (txt or "")[:700]
+    m = _EMP_AFTER_MODE.search(head) or _EMP_BEFORE_ACT.search(head)
+    return m.group(1).lower() if m else None
+
+
+def is_part_time(title, txt):
+    """True for part-time roles (header type Part-time, or 'part time' in the title)."""
+    if _PARTTIME.search(title or ""):
+        return True
+    return employment_type(title, txt) == "part-time"
+
+
+def is_contract(title, txt):
+    """True for fixed-term / contract / temporary roles (header type, or a contract qualifier in
+    the title). A permanent 'Full-time Contract - N Months' still counts as contract by intent."""
+    if employment_type(title, txt) in ("contract", "temporary"):
+        return True
+    return bool(_CONTRACT_TITLE.search(title or ""))
+
+
+# ---------- listing liveness / ghost detection (S1 + S3) ----------
+# Fake/phishing/ghost listings tend to be dead or closed by the time the shortlist is read:
+# the page is gone (404 placeholder), or it stopped accepting applications within a day or two
+# of posting (resume-harvesting ghosts). Both are readable signals we previously ignored.
+_REMOVED = re.compile(
+    r"job posting (?:may not be valid|has been removed|is no longer available)|"
+    r"unable to load the page|this job is no longer available", re.I)
+_CLOSED = re.compile(r"no longer accepting applications", re.I)
+_AGE = re.compile(r"(\d+)\s*(minute|hour|day|week|month)s?\s*ago", re.I)
+_AGE_UNIT_H = {"minute": 1 / 60, "hour": 1, "day": 24, "week": 168, "month": 720}
+
+
+def listing_status(txt):
+    """'removed' (page gone), 'closed' (no longer accepting), or 'open'. Read from the detail
+    text (works on already-saved files) or from a live re-ping's page text."""
+    t = txt or ""
+    if _REMOVED.search(t):
+        return "removed"
+    if _CLOSED.search(t[:1200]):   # the apply-status banner sits near the top of the pane
+        return "closed"
+    return "open"
+
+
+def posted_hours(txt):
+    """Hours since the listing was posted (from the '· N <unit> ago' header), or None."""
+    m = _AGE.search((txt or "")[:600])
+    if not m:
+        return None
+    return int(m.group(1)) * _AGE_UNIT_H[m.group(2).lower()]
+
+
+def is_fast_close_ghost(txt, max_hours=48):
+    """S3 freshness anomaly: a listing that has already stopped accepting applications within
+    ~max_hours of being posted is almost never a real role filling that fast — it is the
+    classic resume-harvesting / ghost pattern (e.g. 'posted 1 day ago' + 'no longer accepting')."""
+    if listing_status(txt) != "closed":
+        return False
+    ph = posted_hours(txt)
+    return ph is not None and ph <= max_hours
+
+
 # ---------- Singapore base/business ----------
 _FOREIGN_TAG = re.compile(r"\(hong kong\)|\bhong kong\b|\b-\s*my\b|\bmalaysia\b|\bjakarta\b|"
                           r"\bmanila\b|\bvietnam\b|\bthailand\b|\bindonesia\b|\beurope\b|\bchennai\b", re.I)

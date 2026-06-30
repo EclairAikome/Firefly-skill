@@ -22,6 +22,11 @@ filt = cfg.get("filters", {})
 maxy = int(filt.get("max_years_exclusive", 3))
 req_sg = bool(filt.get("require_singapore", True))
 drop_mlm = bool(filt.get("drop_direct_sales_mlm", True))
+drop_contract = bool(filt.get("drop_contract", False))
+drop_part = bool(filt.get("drop_part_time", False))
+drop_removed = bool(filt.get("drop_removed", True))      # S1: page gone / 404 placeholder
+drop_closed = bool(filt.get("drop_closed", True))        # S1: "no longer accepting applications"
+fast_close_h = int(filt.get("fast_close_hours", 48))     # S3: closed within this many hours = ghost
 
 all_kw = []
 for t in (cfg.get("profile", {}).get("tracks", {}) or {}).values():
@@ -99,11 +104,22 @@ for jid, c in cands.items():
     miny, ev = L.min_required_years(txt)
     sg = L.is_singapore(c.get("loc", ""), c["title"], txt)
     mlm = L.is_direct_sales_mlm(c["company"], c["title"], txt)
+    status = L.listing_status(txt)
     reason = None
-    if miny is not None and miny >= maxy:
+    # S1/S3 (highest priority): a dead or ghost listing is worthless however well it fits.
+    if drop_removed and status == "removed":
+        reason = "removed"
+    elif drop_closed and status == "closed":
+        # S3 freshness anomaly: closed within ~fast_close_h of posting = resume-harvesting ghost.
+        reason = "ghost_fast_close" if L.is_fast_close_ghost(txt, fast_close_h) else "closed"
+    elif miny is not None and miny >= maxy:
         reason = f"years>={maxy} ({ev})"
     elif L.is_senior_title(c["title"]):
         reason = "senior_title"
+    elif drop_contract and L.is_contract(c["title"], txt):
+        reason = "contract"
+    elif drop_part and L.is_part_time(c["title"], txt):
+        reason = "part_time"
     elif req_sg and not sg:
         reason = "not_singapore"
     elif drop_mlm and mlm:
