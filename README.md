@@ -2,7 +2,7 @@
 
 **A [Claude Code](https://claude.com/claude-code) skill that runs your LinkedIn job hunt for you: scrape, filter, and export a ranked shortlist. Fully automated, read-only.**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) ![version](https://img.shields.io/badge/version-1.0.1-brightgreen)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) ![version](https://img.shields.io/badge/version-1.0.2-brightgreen)
 
 <p align="center">
   <img src="FIREFLY.jpg" alt="Firefly" width="360">

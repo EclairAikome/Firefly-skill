@@ -116,12 +116,29 @@ Reading the JD of *every* candidate is required — cards never show the experie
 and Key Requirements are captured. This matters: LinkedIn hides the overflow of the JD, and
 the hidden text is not in the page's innerText until "see more" is clicked — skip it and the
 JD/requirements come out truncated with a trailing "… more".
-Each page is ~15-20s, so a long list will blow the tool timeout. Read in chunks of ~15 and
-skip any id already saved (idempotent resume):
+Each page is ~15-20s, so a long list will blow the tool timeout. `read_details.sh` is idempotent
+(skips ids already saved) so re-running resumes. Signature:
 ```bash
-bash "<SKILL_DIR>\scripts\read_details.sh" "<SKILL_DIR>" "<RUN_DIR>" ljh
-# re-run the same command after a timeout; it only fetches the missing ids
+bash "<SKILL_DIR>\scripts\read_details.sh" "<SKILL_DIR>" "<RUN_DIR>" <session> [MAX] [BROWSER_ID]
+#   MAX        : read at most this many NEW pages this pass (0 = unlimited)
+#   BROWSER_ID : (re)open the browser on <session> first, so a fresh session works
 ```
+A single session degrades after ~65 reads and starts returning empty pages, so each pass bails
+after 5 empties in a row; a fresh session fixes it. For small pools just re-run after a timeout.
+
+#### Heartbeat watchdog (large pools / unattended)
+A plain background read is killed when the Claude session is torn down, so a 100+ page pool can
+stall silently. Install the watchdog: a **Windows Scheduled Task** (owned by the OS, survives the
+Claude session ending) that every 5 minutes logs a heartbeat, and if the read stalled or died,
+relaunches a bounded pass on a fresh session. It removes itself once every candidate is read.
+```powershell
+powershell -ExecutionPolicy Bypass -File "<SKILL_DIR>\scripts\watchdog_install.ps1" `
+  -SkillDir "<SKILL_DIR>" -RunDir "<RUN_DIR>" -BrowserId "<browser_id>"   # e.g. chrome_local_...
+# progress -> <RUN_DIR>\heartbeat.log ; <RUN_DIR>\COMPLETE appears when done
+# cancel early: powershell -File "<SKILL_DIR>\scripts\watchdog_remove.ps1"
+```
+Get `<browser_id>` from `browser-act browser list`. The watchdog reads `details/` vs
+`candidates.json` to track progress, so it is safe to install/remove at any time.
 
 ### Phase 6 — rule filter + parse (deterministic)
 ```bash
