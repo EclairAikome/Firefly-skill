@@ -96,6 +96,8 @@ for jid, c in cands.items():
     reason = None
     if miny is not None and miny >= maxy:
         reason = f"years>={maxy} ({ev})"
+    elif L.is_senior_title(c["title"]):
+        reason = "senior_title"
     elif req_sg and not sg:
         reason = "not_singapore"
     elif drop_mlm and mlm:

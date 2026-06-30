@@ -66,39 +66,54 @@ def work_mode(card_loc):
 
 
 # ---------- experience years ----------
-# Lines that mention years but are NOT an employer requirement. The big one: LinkedIn's
-# auto skill tags ("• 3+ years of work experience with <skill>") and company insights.
-_NOISE = re.compile(
-    r"year growth|median (employee )?tenure|years? of age|our history|history spans|"
-    r"increase in|increased? \d|% (have|of|increase)|founded|established \d{4}|"
-    r"•\s*\d+\+?\s*years?\s*of work experience with", re.I)
-_SOFT = re.compile(r"\b(preferred|plus|nice to have|advantage|asset|bonus|ideally|a plus)\b", re.I)
-_REQCTX = re.compile(r"experien|minimum|at least|require|track record|years in|years of", re.I)
-_YEARS = re.compile(r"(\d+)\s*(?:[-–~]|to)?\s*(\d+)?\s*\+?\s*years?", re.I)
+# Read the employer's required experience from the FULL (expanded) JD. The hard part is not
+# being fooled by: LinkedIn's auto skill-tags ("• 3+ years of work experience with <skill>"),
+# company-insight noise ("2 year growth", "median tenure 4 years"), contract durations, or the
+# word "age" hiding inside "manAGEment". So: scan normalized text (not lines), tie each
+# year-number to an experience context, take the LOWER bound of any range, and use the smallest
+# hard requirement as the floor.
+_SKILLTAG = re.compile(r"•?\s*\d+\+?\s*years?\s*of work experience with[^•]*", re.I)
+_EXCL = re.compile(r"\b(contract|tenure|history|growth|anniversary|founded|established|spans|"
+                   r"hires|years old|aged)\b", re.I)
+_SOFT = re.compile(r"\b(prefer\w*|nice to have|advantage|asset|bonus|ideally|a plus|would be)\b", re.I)
+_HARD = re.compile(r"minimum|at least|must|require", re.I)
+_YR = re.compile(r"(\d+)\s*(?:[-–—~～/]|to|and)?\s*(\d+)?\s*(\+)?\s*years?\b", re.I)
 
 
 def min_required_years(txt):
-    """Return (floor_years or None, evidence). floor = smallest minimum across HARD
-    requirement lines, ignoring noise and soft (preferred) mentions."""
-    floors, evidence = [], None
-    for ln in (txt or "").split("\n"):
-        s = re.sub(r"\s+", " ", ln).strip()
-        if not s or _NOISE.search(s):
+    """Return (floor_years or None, evidence). Floor = smallest lower-bound across hard,
+    experience-tied year requirements; a range like '3-5 years' contributes its lower number."""
+    s = re.sub(r"\s+", " ", txt or "")
+    s = _SKILLTAG.sub(" ", s)
+    out = []
+    for m in _YR.finditer(s):
+        foll = s[m.end():m.end() + 30].lower().lstrip()
+        ctx = s[max(0, m.start() - 45):m.end() + 30].lower()
+        plus = bool(m.group(3))
+        # a real requirement reads like "<n> years of/in/as ..." or "... experience ..." or
+        # carries an explicit "+" (nobody writes "5+ years" for a contract length)
+        if not (foll.startswith(("of ", "in ", "as ")) or "experien" in ctx or plus):
             continue
-        if not _REQCTX.search(s):
+        if _EXCL.search(ctx):
             continue
-        if _SOFT.search(s) and not re.search(r"minimum|at least|required|must", s, re.I):
-            continue
-        m = _YEARS.search(s)
-        if not m:
+        if _SOFT.search(ctx) and not _HARD.search(ctx):
             continue
         lo = int(m.group(1))
-        floors.append(lo)
-        if evidence is None or lo == min(floors):
-            evidence = s[:160]
-    if not floors:
+        if lo > 30:
+            continue
+        out.append((lo, s[max(0, m.start() - 15):m.end() + 22].strip()))
+    if not out:
         return None, None
-    return min(floors), evidence
+    out.sort(key=lambda x: x[0])
+    return out[0][0], out[0][1][:160]
+
+
+_SENIOR = re.compile(r"\b(senior|sr\.?|lead|principal|staff|director|vp|chief|head of)\b", re.I)
+
+
+def is_senior_title(title):
+    """A clear seniority signal in the title is not entry-level, whatever years it states."""
+    return bool(_SENIOR.search(title or ""))
 
 
 # ---------- Singapore base/business ----------
