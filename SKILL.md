@@ -183,6 +183,13 @@ This applies the hard rules and writes both kept and dropped (with reasons). The
   and `closed` ("no longer accepting applications", toggle `drop_closed`) are dropped outright; a
   listing closed within `fast_close_hours` (default 48h) of being posted is dropped as
   `ghost_fast_close` (resume-harvesting pattern, e.g. "posted 1 day ago" + already closed).
+- **Blacklisted company / title -> drop.** Config lists `blacklist_companies` (case-insensitive
+  substring of the employer name) and `blacklist_titles` (whole-word match on the title) hard-drop
+  the legit-but-off-track noise and pay-to-"volunteer" / commission-recruitment junk that clears
+  every other rule and only sinks on fit score (retail sales, hospital/logistics/admin ops,
+  financial-advisory recruitment, travel "volunteer" placements the applicant pays for). Titles use
+  a word boundary so a short term never fires inside another word (`IT Specialist` must not match
+  `Credit Specialist`). Extend the two lists in `config.yaml` as new offenders appear.
 
 ### Phase 6.5 — liveness re-check before build (S2, needs the live session)
 Listings die fast: one live at scrape time is often closed/removed by the time the workbook is

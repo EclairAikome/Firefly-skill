@@ -267,6 +267,27 @@ def is_direct_sales_mlm(company, title, txt):
     return False
 
 
+def is_blacklisted(company, title, companies=None, titles=None):
+    """Config-driven hard blacklist. Drops legit-but-off-track noise and pay-to-'volunteer' /
+    commission-recruitment junk that clears every other rule and only sinks on fit score
+    (e.g. retail sales, hospital/logistics/admin ops, financial-advisory recruitment, travel
+    'volunteer' placements the applicant pays for). Returns a short match reason or None.
+    Companies match as a case-insensitive SUBSTRING (brand contained in the employer name);
+    titles match on a WORD BOUNDARY so a short term never fires inside another word
+    (e.g. 'IT Specialist' must not match 'Credit Specialist')."""
+    c = (company or "").lower()
+    t = (title or "").lower()
+    for p in (companies or []):
+        pl = (p or "").lower().strip()
+        if pl and pl in c:
+            return f"company:{p}"
+    for p in (titles or []):
+        pl = (p or "").strip()
+        if pl and re.search(r"\b" + re.escape(pl.lower()) + r"\b", t):
+            return f"title:{p}"
+    return None
+
+
 # ---------- heuristic fit score (fallback when not agent-scored) ----------
 def keyword_overlap_score(jd, req, keywords):
     blob = f"{jd}\n{req}".lower()

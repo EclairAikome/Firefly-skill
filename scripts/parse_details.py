@@ -27,6 +27,8 @@ drop_part = bool(filt.get("drop_part_time", False))
 drop_removed = bool(filt.get("drop_removed", True))      # S1: page gone / 404 placeholder
 drop_closed = bool(filt.get("drop_closed", True))        # S1: "no longer accepting applications"
 fast_close_h = int(filt.get("fast_close_hours", 48))     # S3: closed within this many hours = ghost
+bl_companies = filt.get("blacklist_companies", []) or []  # hard-drop these employers outright
+bl_titles = filt.get("blacklist_titles", []) or []        # hard-drop these title patterns outright
 
 all_kw = []
 for t in (cfg.get("profile", {}).get("tracks", {}) or {}).values():
@@ -105,6 +107,7 @@ for jid, c in cands.items():
     sg = L.is_singapore(c.get("loc", ""), c["title"], txt)
     mlm = L.is_direct_sales_mlm(c["company"], c["title"], txt)
     status = L.listing_status(txt)
+    blk = L.is_blacklisted(c["company"], c["title"], bl_companies, bl_titles)
     reason = None
     # S1/S3 (highest priority): a dead or ghost listing is worthless however well it fits.
     if drop_removed and status == "removed":
@@ -112,6 +115,8 @@ for jid, c in cands.items():
     elif drop_closed and status == "closed":
         # S3 freshness anomaly: closed within ~fast_close_h of posting = resume-harvesting ghost.
         reason = "ghost_fast_close" if L.is_fast_close_ghost(txt, fast_close_h) else "closed"
+    elif blk:
+        reason = f"blacklist ({blk})"
     elif miny is not None and miny >= maxy:
         reason = f"years>={maxy} ({ev})"
     elif L.is_senior_title(c["title"]):

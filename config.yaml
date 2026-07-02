@@ -38,6 +38,13 @@ filters:
   drop_removed: true           # drop dead listings (404 / "job posting has been removed")
   drop_closed: true            # drop closed listings ("no longer accepting applications")
   fast_close_hours: 48         # a listing closed within this many hours of posting = ghost -> drop
+  blacklist_companies:         # hard-drop these employers outright (case-insensitive substring of the company name)
+    # - "Some Volunteer Org"    # e.g. pay-to-"volunteer" travel placements the applicant pays for
+    # - "Acme Financial"        # e.g. commission-only financial-advisory / insurance recruitment
+  blacklist_titles:            # hard-drop these title patterns outright (whole-word match, case-insensitive)
+    # - "Volunteer"             #   whole-word: 'IT Specialist' will NOT match 'Credit Specialist'
+    # - "Sales Associate"       # e.g. retail floor roles off your track
+    # - "Office Administrator"
   # No top-N cap: every job that passes the rules above is kept, sorted by fit score.
 
 exclusion_sources:
