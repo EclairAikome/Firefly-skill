@@ -1,8 +1,9 @@
-// Extract a LinkedIn job detail page (standalone /jobs/view/<id>/ layout).
-// The standalone page uses unstable class names, so we grab `main` innerText and let
-// the Python parser pull location / posted-date / experience / JD heuristically.
-// Returns JSON {title, txt}.
 (() => {
+  // Extract a LinkedIn job detail page (standalone /jobs/view/<id>/ layout).
+  // The standalone page uses unstable class names, so we grab `main` innerText and let
+  // the Python parser pull location / posted-date / experience / JD heuristically.
+  // Returns JSON {title, status, txt}.
+  // NOTE: file must START with "(" — a leading comment makes eval wrappers return null.
   const title = (document.querySelector('h1')?.innerText || '').trim() || document.title;
   const main = document.querySelector('main') || document.body;
   let txt = (main.innerText || '').replace(/\r/g, '');

@@ -1,61 +1,79 @@
-# Firefly-skill configuration  --  this is the only file you normally edit.
-# Everything below is an EXAMPLE. Customize it to your own job hunt.
+# Firefly-skill configuration — July 2026 cycle (Ji Li, Singapore entry-level)
+# Browser driven by browser-harness this cycle (browser-act unreachable); the
+# browser: block below is kept for when browser-act comes back.
 
 browser:
-  name: "linkedin-jobhunt"      # reused across runs; created once via browser-act
-  session: "ljh"               # browser-act session name for this skill
+  name: "linkedin-jobhunt"
+  session: "ljh"               # used by the browser-act driver / browser fallback
+
+pipeline:
+  driver: "harness"            # harness | act | direct  (env FIREFLY_DRIVER overrides)
+  max_cards_per_query: 200     # paging cap per search query (guest pages are 10 cards)
+  cards_interval: [1.4, 2.2]   # seconds between card-page fetches
+  detail_fetch_interval: [1.0, 1.6]
+  detail_chunk_size: 250       # details per worker subprocess (resumable across chunks)
+  recheck_max_age_hours: 4     # skip the pre-build liveness re-ping if details are fresher
+  recheck_interval: [0.8, 1.4]
 
 profile:
-  # A one-line description of yourself, used by the agent to judge fit.
-  candidate: "<e.g. new grad in Singapore, intern-level experience, targeting the two tracks below>"
+  candidate: "Ji Li — NUS fresh grad in Singapore, intern-level experience; targets two tracks:
+    (A) entry/associate product management, business/data analyst, AI/GenAI ops roles;
+    (B) digital/growth/performance marketing, social & content, influencer/creator partnerships.
+    Comfortable with SQL, Python, dashboards, prompt/LLM tooling; open to contract roles."
   tracks:
     track_a:
-      keywords: [product manager, associate product manager, AI product, LLM, automation,
-                 internal tooling, product ownership, roadmap, SQL, python, data]
+      keywords: [product manager, associate product manager, product owner, product operations,
+                 AI product, LLM, GenAI, automation, internal tooling, roadmap,
+                 business analyst, data analyst, SQL, python, dashboards, Power BI,
+                 market intelligence, competitive analysis, strategy, operations analyst]
     track_b:
-      keywords: [affiliate marketing, influencer, KOL, creator partnerships, growth marketing,
-                 performance marketing, competitive analysis, content strategy, social, digital marketing]
+      keywords: [digital marketing, growth marketing, performance marketing, paid media,
+                 social media, content strategy, content marketing, copywriting,
+                 influencer, KOL, creator partnerships, affiliate marketing,
+                 e-commerce, campaign management, SEO, SEM, CRM, marketing analytics,
+                 public relations, communications, community]
 
 search:
   location_label: "Singapore"
-  geo_id: "102454443"          # LinkedIn geoId. 102454443 = Singapore. Change for your city/country.
-  experience: "2,3"            # f_E: 1=Intern 2=Entry 3=Associate 4=Mid-Senior 5=Director 6=Exec
-  recency: "r2592000"          # f_TPR: r604800=past week, r2592000=past month
-  sort: "DD"                   # DD = most recent
-  scroll_rounds: 2             # times to scroll each results page before extracting
-  queries:                     # one LinkedIn search per line -- use your own target titles
+  geo_id: "102454443"
+  experience: "2,3"            # Entry + Associate (same as the June cycle)
+  recency: "r604800"           # past week — June cycle already covered postings up to ~06-24
+  sort: "DD"
+  scroll_rounds: 3
+  queries:
     - "Associate Product Manager"
     - "AI Product Manager"
+    - "Product Manager"
+    - "Business Analyst"
+    - "Data Analyst"
+    - "Digital Marketing"
     - "Growth Marketing"
-    - "Digital Marketing Executive"
+    - "Social Media Executive"
+    - "Marketing Associate"
+    - "Content Marketing"
+    - "Strategy Analyst"
 
 filters:
-  max_years_exclusive: 3       # drop a job if its minimum required experience is >= this
-  require_singapore: true      # drop roles not based/operating in your location
-  drop_direct_sales_mlm: true  # drop Organisation / Marketing Group direct-sales/MLM roles
-  drop_contract: false         # drop fixed-term / contract / temporary roles (off by default)
-  drop_part_time: false        # drop part-time roles (off by default)
-  drop_removed: true           # drop dead listings (404 / "job posting has been removed")
-  drop_closed: true            # drop closed listings ("no longer accepting applications")
-  fast_close_hours: 48         # a listing closed within this many hours of posting = ghost -> drop
-  blacklist_companies:         # hard-drop these employers outright (case-insensitive substring of the company name)
-    # - "Some Volunteer Org"    # e.g. pay-to-"volunteer" travel placements the applicant pays for
-    # - "Acme Financial"        # e.g. commission-only financial-advisory / insurance recruitment
-  blacklist_titles:            # hard-drop these title patterns outright (whole-word match, case-insensitive)
-    # - "Volunteer"             #   whole-word: 'IT Specialist' will NOT match 'Credit Specialist'
-    # - "Sales Associate"       # e.g. retail floor roles off your track
-    # - "Office Administrator"
-  # No top-N cap: every job that passes the rules above is kept, sorted by fit score.
+  max_years_exclusive: 3
+  require_singapore: true
+  drop_direct_sales_mlm: true
+  drop_contract: false         # June cycle showed the user applies to contract roles too
+  drop_part_time: false
+  drop_removed: true
+  drop_closed: true
+  fast_close_hours: 48
+  blacklist_companies: []
+  blacklist_titles: []
 
 exclusion_sources:
-  # Optional. Paths to past application logs (CSV with Company, Title, URL columns) to dedupe
-  # against, on top of the skill's own persistent master library. Example:
-  # - "C:\\path\\to\\your\\past_applications.csv"
+  # Every job surfaced in the June cycle (v3 837 + v2/AnalystAI + 54 first-cycle applied),
+  # so nothing already applied to (112 + 54) — or even previously shortlisted — reappears.
+  - "D:\\ClaudeData\\Job Search July\\june_seen_jobs.csv"
 
 output:
-  dir: "C:\\path\\to\\your\\output\\folder"   # where the dated .xlsx is written
-  basename: "LinkedIn_Matches"                # final file: <basename>_<YYYY-MM-DD>.xlsx
+  dir: "D:\\ClaudeData\\Job Search July"
+  basename: "SG_LinkedIn_Jobs_July2026"
   template_style: "v3"
 
 scoring:
-  mode: "agent"                # agent = the agent judges fit in context; heuristic = keyword-overlap fallback
+  mode: "agent"

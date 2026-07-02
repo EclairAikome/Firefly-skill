@@ -9,12 +9,12 @@ description: >-
   Trigger on phrases like "scrape LinkedIn jobs", "find me entry-level jobs", "refresh
   my job list", "update the job tracker", "new job matches", "do a job-hunt run",
   "pull SG product/marketing jobs", even when the user does NOT say "scrape" outright.
-  It searches LinkedIn with a logged-in browser, reads every job detail page, drops
-  roles needing >= N years, non-Singapore roles, direct-sales/MLM roles, and anything
-  already applied to, scores fit, and writes a dated v3-style .xlsx (Job Applications +
-  This-Week by Fit + Summary) sorted by match score, deduping against past runs. Do NOT
-  use it for: applying to jobs or filling application forms (a separate apply skill does
-  that); scraping non-LinkedIn sites or product/price data; exporting LinkedIn connections
+  It searches LinkedIn, reads every job's full description, drops roles needing >= N
+  years, non-Singapore roles, direct-sales/MLM roles, and anything already applied to,
+  scores fit, and writes a dated v3-style .xlsx (Job Applications + This-Week by Fit +
+  Summary) sorted by match score, deduping against past runs. Do NOT use it for:
+  applying to jobs or filling application forms (a separate apply skill does that);
+  scraping non-LinkedIn sites or product/price data; exporting LinkedIn connections
   or collecting people's profiles for networking/lead-gen; resume writing; or generic
   spreadsheet formatting. This skill is READ-ONLY and is specifically about turning
   LinkedIn job OPENINGS into a fit-ranked shortlist; it never auto-applies.
@@ -26,245 +26,154 @@ Automates the LinkedIn job-hunt scrape this user runs repeatedly: search both of
 career tracks, read each job's full description, filter hard on the rules they care
 about, score fit, and hand back a clean spreadsheet in their established format.
 
-**Scope is deliberately read-only.** Every blocker in the user's past runs (captchas,
-"I'm not a robot" walls, garbled Easy Apply modals, ATS login walls) came from the
-*apply* step, not the *scrape* step. Logged-in scraping almost never trips anti-bot.
-Keeping this skill to scrape -> filter -> export is what makes it safe to run unattended.
-Applying is handled by the user's separate apply skill — do not apply here.
+**Scope is deliberately read-only.** Every blocker in past runs (captchas, "I'm not a
+robot" walls, garbled Easy Apply modals, ATS login walls) came from the *apply* step,
+not the *scrape* step. Applying is handled by the user's separate apply skill.
 
-## Prerequisites (check once per run, set up once ever)
+**Data path is guest-API-first.** Cards and full JDs come from LinkedIn's guest
+endpoints (`jobs-guest/jobs/api/...`, see `references/linkedin_params.md`), fetched
+through the logged-in Chrome's network stack so the user's proxy and cookies apply.
+This is deliberate: current LinkedIn virtualizes the search list and ignores scripted
+scrolling, and the logged-in detail pane has an SPA race that can serve a *neighbouring*
+job's JD. The guest endpoints have neither problem — an HTTP response is keyed to its
+id by the request itself — and each detail costs ~1.5s instead of 15-20s. The browser
+DOM survives only as a detail-read fallback (`fetch_details.py --mode browser`).
 
-1. `browser-act` CLI installed and authed. Verify:
-   ```bash
-   browser-act get-skills core --skill-version 2.0.2   # expect skill_compat: ok, api_key: configured
-   ```
-   If missing, see the browser-act skill. Anti-bot stealth features need the free API key,
-   but for plain logged-in Chrome scraping the key is not strictly required.
+## Prerequisites (check once per run)
 
-2. A reusable logged-in browser. Check first:
-   ```bash
-   browser-act browser list        # look for the browser named in config (default: linkedin-jobhunt)
-   ```
-   - **Exists** -> reuse it. This is the key to unattended runs: no Confirmation Gate fires.
-   - **Missing** -> create it ONCE (this needs one human confirmation, per browser-act's gate):
-     run `browser-act get-skills advanced`, then `browser-act browser list-profiles`, present the
-     plan, and after the user confirms:
-     ```bash
-     browser-act browser create --name "linkedin-jobhunt" --type chrome \
-       --desc "LinkedIn job scraping; imported Chrome login" --source-profile <profile_id>
-     ```
-   Creating it copies the user's Chrome login into an isolated browser; their real Chrome is
-   untouched afterward. Importing may briefly close their Chrome.
+1. Chrome running and logged in to LinkedIn (the fetch driver rides its network stack).
+2. One data driver on PATH — set `pipeline.driver` in `config.yaml` (or `FIREFLY_DRIVER`):
+   - `harness` (default): the `browser-harness` CLI. Field-tested.
+   - `act`: the `browser-act` CLI. Written to spec but UNTESTED (browser-act was
+     unreachable when this path was built) — verify on first use.
+   - `direct`: plain HTTP from Python. Only works if the shell itself can reach
+     linkedin.com (VPN/proxy env vars set).
+3. Python 3.12+ with `uv`. All commands below run from the skill directory.
 
-## How to run the pipeline
+The pipeline probes the guest API before scraping (phase `02_probe`) and fails loud if
+it is unreachable, so a broken setup costs seconds, not a silent empty workbook.
 
-Everything is driven from the skill directory. Set `SKILL_DIR` to this skill's folder
-(`~/.claude/skills/Firefly-skill` -> `C:\Users\<you>\.claude\skills\Firefly-skill`)
-and read `config.yaml` for queries, filters, paths, and the browser/session names.
+## How to run
 
-**Run all browser-act + script commands through the Bash tool, not PowerShell.** PowerShell's
-pipe corrupts `eval --stdin`; Bash piping (`cat file.js | browser-act ... eval --stdin`) works.
-Always run Python with `PYTHONUTF8=1` and pass **Windows-style paths** to Python (MSYS `/c/...`
-paths break native Python `open()`).
+One command drives the whole pipeline, checkpointed and resumable:
 
-### Phase 1 — exclusion set (dedupe vs past)
 ```bash
-PYTHONUTF8=1 uv run --with pyyaml python "<SKILL_DIR>\scripts\build_exclusion.py" \
-  --config "<SKILL_DIR>\config.yaml" --run "<RUN_DIR>"
+PYTHONUTF8=1 uv run --with pyyaml --with openpyxl python scripts/run_pipeline.py \
+    --config config.yaml
 ```
-`<RUN_DIR>` is `state\run_<YYYY-MM-DD>` under the skill dir; create it at the start of the run.
-Builds the already-applied/already-seen set from the persistent master library
-(`state\master_jobs.jsonl`) plus any history sources in config (e.g. a past `RESULTS.csv`).
-Dedupe key is the LinkedIn job id from the URL; normalized company+title is the backup.
 
-### Phase 2 — open session, verify login
-```bash
-S=$(grep session_name "<SKILL_DIR>\config.yaml")   # or just use the configured session name, e.g. ljh
-browser-act --session ljh browser open <browser_id> "https://www.linkedin.com/feed/"
-browser-act --session ljh get title                # expect a title containing "Feed"
-```
-If the title is a login/guest page, the imported login expired. Try one re-import
-(`browser-act browser import-profile <browser_id> <profile_id>`) and re-check. If still not
-logged in, do NOT hang: write the run report noting "login expired", optionally emit a
-`browser-act --session ljh remote-assist --objective "Log in to LinkedIn"` link, and stop.
+Every phase writes a `.done` marker under the run dir (default
+`state/run_<YYYY-MM-DD>`); re-running skips completed phases, so interruptions
+(token limits, crashes, guest outages) resume exactly where they stopped. Useful
+flags: `--run <dir>` (explicit run dir), `--until <phase>` (stop after a phase),
+`--force-from <phase>` (redo a phase and everything after it), `--list` (show
+phase status). Long runs: launch it in the background and check `pipeline.log`.
 
-### Phase 3 — search and extract cards
-Generate the per-query URLs from config, then drive all searches with one helper:
-```bash
-PYTHONUTF8=1 uv run --with pyyaml python "<SKILL_DIR>\scripts\gen_search_urls.py" \
-  --config "<SKILL_DIR>\config.yaml" --run "<RUN_DIR>"
-bash "<SKILL_DIR>\scripts\search.sh" "<SKILL_DIR>" "<RUN_DIR>" ljh
-```
-`search.sh` navigates each query (URL shape in `references/linkedin_params.md`), scrolls
-`scroll_rounds` times, and extracts cards to `<RUN_DIR>\cards\<query>.json`.
+| Phase | What it does | Script |
+|---|---|---|
+| 01_exclusion | already-applied/seen set from master library + history CSVs | build_exclusion.py |
+| 02_probe | guest-API reachability check (fail loud early) | (built-in) |
+| 03_cards | guest search, paged, all queries -> cards/*.json | fetch_cards.py |
+| 04_aggregate | id-dedupe + collapse same-role reposts + drop already-seen | aggregate_candidates.py |
+| 05_prefilter | card-level rules: senior titles, foreign-tagged locations | prefilter_cards.py |
+| 06_details | guest jobPosting fetch for every candidate + integrity gate loop | fetch_details.py + verify_details.py |
+| 07_parse | hard rules on full JDs -> kept/dropped | parse_details.py |
+| 08_recheck | liveness re-ping, ONLY if details are older than `recheck_max_age_hours` | recheck_live.py |
+| 09_apply_live | drop kept jobs that died since the fetch (fail open) | apply_live_status.py |
+| 10_digest | compact per-job digest for agent scoring | make_digest.py |
+| 11_scores | merge agent score batches; in agent mode HALT (exit 3) until they exist | merge_scores.py |
+| 12_build | dated v3 workbook + idempotent master-library update | build_xlsx.py |
+| 13_verify_wb | deterministic ship-gate: leaks/order/structure (red = do not ship) | verify_workbook.py |
+| 14_report | report.md into the run dir + a copy next to the workbook | run_report.py |
 
-Do NOT use `get markdown` on LinkedIn search pages — it pulls in a huge blob of injected
-localization JSON. The `eval` DOM extractor (anchor `a[href*="/jobs/view/"]`) is clean and
-survives LinkedIn class-name churn.
+Each script still runs standalone with the same arguments — use that for debugging a
+single phase.
 
-### Phase 4 — aggregate + dedupe
-```bash
-PYTHONUTF8=1 python "<SKILL_DIR>\scripts\aggregate_candidates.py" --run "<RUN_DIR>" \
-  --exclusion "<RUN_DIR>\exclusion.json" --out "<RUN_DIR>\candidates.json"
-```
-Merges all query cards, dedupes by job id, strips the " with verification" title suffix,
-removes anything in the exclusion set.
+## Phase 7 — agent scoring protocol
 
-### Phase 5 — read every detail page (chunked, resumable)
-Reading the JD of *every* candidate is required — cards never show the experience bar.
-`read_details.sh` clicks the JD's "see more" toggle before reading, so the FULL description
-and Key Requirements are captured. This matters: LinkedIn hides the overflow of the JD, and
-the hidden text is not in the page's innerText until "see more" is clicked — skip it and the
-JD/requirements come out truncated with a trailing "… more".
-Each page is ~15-20s, so a long list will blow the tool timeout. `read_details.sh` is idempotent
-(skips ids already saved) so re-running resumes. Signature:
-```bash
-bash "<SKILL_DIR>\scripts\read_details.sh" "<SKILL_DIR>" "<RUN_DIR>" <session> [MAX] [BROWSER_ID]
-#   MAX        : read at most this many NEW pages this pass (0 = unlimited)
-#   BROWSER_ID : (re)open the browser on <session> first, so a fresh session works
-```
-A single session degrades after ~65 reads and starts returning empty pages, so each pass bails
-after 5 empties in a row; a fresh session fixes it. For small pools just re-run after a timeout.
+With `scoring.mode: agent` the pipeline stops after `10_digest` (exit code 3) and
+prints AWAITING AGENT SCORES. Then:
 
-#### Heartbeat watchdog (large pools / unattended)
-A plain background read is killed when the Claude session is torn down, so a 100+ page pool can
-stall silently. Install the watchdog: a **Windows Scheduled Task** (owned by the OS, survives the
-Claude session ending) that every 5 minutes logs a heartbeat, and if the read stalled or died,
-relaunches a bounded pass on a fresh session. It removes itself once every candidate is read.
-```powershell
-powershell -ExecutionPolicy Bypass -File "<SKILL_DIR>\scripts\watchdog_install.ps1" `
-  -SkillDir "<SKILL_DIR>" -RunDir "<RUN_DIR>" -BrowserId "<browser_id>"   # e.g. chrome_local_...
-# progress -> <RUN_DIR>\heartbeat.log ; <RUN_DIR>\COMPLETE appears when done
-# cancel early: powershell -File "<SKILL_DIR>\scripts\watchdog_remove.ps1"
-```
-Get `<browser_id>` from `browser-act browser list`. The watchdog reads `details/` vs
-`candidates.json` to track progress, so it is safe to install/remove at any time.
+1. Read `<RUN_DIR>/scoring_digest.json` — one compact row per kept job, sorted by
+   heuristic score. **Read `yrs_all` before scoring anything high**: it lists every
+   year-requirement clause, because stacked requirements ("3+ yrs PM and 2+ yrs AI")
+   hide behind the floor that the deterministic gate uses. `sen`/`emp`/`ind` carry
+   LinkedIn's structured Seniority/Employment/Industries fields.
+2. Judge fit against `config.yaml`'s profile. Scoring guidance — be concrete and
+   honest, this is the whole value of the skill:
+   - Anchor `why` in the user's actual background, not generic praise.
+   - `watch` should name the real risk (years gap, domain, visa/language gate,
+     internship-not-FT, suspected roadshow bait) so the user can triage fast.
+   - 85-95 = strong/apply-now, 78-84 = solid, 65-77 = stretch. Before granting >=85,
+     re-read that job's full `req` in `kept_candidates.json`.
+3. Write scores in batches of ~70 as `<RUN_DIR>/scores_p1.jsonl`, `scores_p2.jsonl`, …
+   one JSON object per line:
+   `{"jid": "...", "fit": "High", "score": 92, "why": "...", "watch": "...",
+     "category": "...", "industry": "..."}`
+4. Re-run the pipeline. `11_scores` merges the batches, refuses to build on partial
+   coverage (missing/extra jids exit non-zero), and the rest runs through.
 
-### Phase 5.5 — verify detail integrity (MANDATORY gate before parse)
-`/jobs/view/<id>/` is an in-place SPA route change: the URL updates immediately but the detail
-pane re-renders a navigation cycle later, so a too-early read saves a *neighbouring* job's JD
-under the wrong id (silent crosstalk — a wrong JD shown under the right company). `read_details.sh`
-now settles + verifies each page, but always run the gate before parsing:
-```bash
-PYTHONUTF8=1 python "<SKILL_DIR>\scripts\verify_details.py" --run "<RUN_DIR>" --delete
-```
-It re-derives each file's true owner from its own body and **deletes** any file whose body does
-not describe its id (and any empty file). It exits non-zero while corruption/gaps remain. Loop
-`read_details.sh` (re-fetches exactly the deleted ids, idempotently) → `verify_details.py` until
-it exits 0. Only then proceed. Never build the workbook while this gate is red.
+With `scoring.mode: heuristic` (unattended runs) the pipeline builds straight through
+on the keyword-overlap fallback score.
 
-### Phase 6 — rule filter + parse (deterministic)
-```bash
-PYTHONUTF8=1 uv run --with pyyaml python "<SKILL_DIR>\scripts\parse_details.py" \
-  --config "<SKILL_DIR>\config.yaml" --run "<RUN_DIR>" --out "<RUN_DIR>\kept_candidates.json"
-```
-`parse_details.py` independently re-checks identity and drops any still-mismatched file as
-`corrupt_read` (defense in depth) so a wrong JD can never reach the workbook even if the gate
-was skipped.
-**Always run this script — do not hand-filter years/Singapore/MLM by eye.** The noise-handling
-(ignoring LinkedIn's auto skill tags like `• 3+ years of work experience with <skill>`, plus
-`X year growth` and `median tenure` lines) is exactly what a manual read gets wrong: it will
-either keep a 5-year role or drop a "1-3 years" one. Let the script decide the hard rules.
+## Verification (never skip)
 
-This applies the hard rules and writes both kept and dropped (with reasons). The rules
-(detailed in `references/filter_rules.md`):
-- **>= N years -> drop.** Parse the real requirement sentence only. IGNORE LinkedIn's auto
-  skill tags (`• 3+ years of work experience with <skill>`), the `X year growth` company
-  insight, and `median tenure` lines — these are NOT employer requirements.
-- **Not Singapore -> drop.** Base/business must be SG. APAC-remote, `(Hong Kong)`, `- MY`,
-  foreign-only postings are out.
-- **Direct-sales / MLM -> drop** (toggle `drop_direct_sales_mlm`). Pattern-matched on company
-  name and copy (e.g. "Organisation", "Marketing Group", "invest in yourself", commission-only).
-- **Contract / part-time -> drop** (toggles `drop_contract` / `drop_part_time`). Read the header
-  employment type ("On-site/Hybrid <Full-time|Contract|Part-time|Internship>") + title qualifiers,
-  NOT the bare word "contract" in the body (which would wrongly drop a permanent "Contracts Manager").
-- **Dead / ghost listing -> drop (S1+S3).** A fake/phishing/ghost posting is usually dead by the
-  time the shortlist is read. `removed` (404 / "job posting has been removed", toggle `drop_removed`)
-  and `closed` ("no longer accepting applications", toggle `drop_closed`) are dropped outright; a
-  listing closed within `fast_close_hours` (default 48h) of being posted is dropped as
-  `ghost_fast_close` (resume-harvesting pattern, e.g. "posted 1 day ago" + already closed).
-- **Blacklisted company / title -> drop.** Config lists `blacklist_companies` (case-insensitive
-  substring of the employer name) and `blacklist_titles` (whole-word match on the title) hard-drop
-  the legit-but-off-track noise and pay-to-"volunteer" / commission-recruitment junk that clears
-  every other rule and only sinks on fit score (retail sales, hospital/logistics/admin ops,
-  financial-advisory recruitment, travel "volunteer" placements the applicant pays for). Titles use
-  a word boundary so a short term never fires inside another word (`IT Specialist` must not match
-  `Credit Specialist`). Extend the two lists in `config.yaml` as new offenders appear.
+- `06_details` loops fetch -> `verify_details.py --delete` until the identity gate is
+  green: every detail file's body must actually describe its id's company+title.
+  Corrupt or empty files are deleted and re-fetched. Never build while this gate is red.
+- `13_verify_wb` re-checks the built workbook: no already-seen id leaks (exclusion CSVs
+  + master library), No. sequence, score ordering, status column, header layout, and
+  sheet-ids == kept-ids. Non-zero exit means do not ship the file.
+- Rule-function unit tests (fixtures are real sentences from past runs, including every
+  bug that ever slipped through):
+  `uv run --with pytest --with pyyaml python -m pytest tests/ -q -s`
 
-### Phase 6.5 — liveness re-check before build (S2, needs the live session)
-Listings die fast: one live at scrape time is often closed/removed by the time the workbook is
-opened. While the browser session is still up, re-ping every KEPT job and drop the ones that died.
-```bash
-bash "<SKILL_DIR>\scripts\recheck_live.sh" "<SKILL_DIR>" "<RUN_DIR>" <session> [BROWSER_ID]
-PYTHONUTF8=1 python "<SKILL_DIR>\scripts\apply_live_status.py" --run "<RUN_DIR>"
-```
-`recheck_live.sh` writes `live_status.tsv` (open/closed/removed per kept id); `apply_live_status.py`
-removes `closed`/`removed` jobs (reasons `closed_at_build` / `removed_at_build`) and keeps the rest.
-It **fails open**: an `unknown`/flaky re-ping is never dropped — only a positive dead signal drops a job.
+## Filters (deterministic gate, phase 05 + 07)
 
-### Phase 7 — score fit (YOU, in context)
-Read `kept_candidates.json`. For each kept job, read its `jd` and `req` and judge fit against
-the user's profile (from `config.yaml` `profile.resume_keywords` / tracks). Write
-`<RUN_DIR>\scores.json` keyed by job id:
-```json
-{ "4434061987": {
-    "fit": "High", "score": 92,
-    "why": "one specific sentence tying the JD to the user's real experience",
-    "watch": "the single biggest caveat (years gap, domain, contract, etc.)",
-    "category": "AI / Product", "industry": "Gaming / Tech" } }
-```
-Scoring guidance — be concrete and honest, this is the whole value of the skill:
-- Anchor `why` in the user's actual background, not generic praise.
-- `watch` should name the real risk (e.g. "asks ~2 yrs, you're sub-1yr" / "healthcare domain"),
-  so the user can triage fast.
-- Score 85-95 = strong/apply-now, 75-84 = solid, 65-74 = stretch. Sort happens on `score`.
-- If this is a headless/unattended run where you cannot deliberate, skip scores.json; the
-  builder falls back to a keyword-overlap heuristic so the run still completes.
-
-### Phase 8 — build the workbook + report
-```bash
-PYTHONUTF8=1 uv run --with openpyxl --with pyyaml python "<SKILL_DIR>\scripts\build_xlsx.py" \
-  --config "<SKILL_DIR>\config.yaml" --run "<RUN_DIR>"
-PYTHONUTF8=1 python "<SKILL_DIR>\scripts\run_report.py" --run "<RUN_DIR>"
-```
-`build_xlsx.py` writes a dated workbook to the configured output dir with THREE sheets that
-mirror `SG_LinkedIn_Jobs_June2026_v3.xlsx` (see `references/v3_format.md`):
-1. **Job Applications** (21 cols) — sorted by match score, highest first; `No.` follows that order.
-2. **This-Week by Fit** (13 cols) — same order; Rank = score rank; includes Why / Watch-outs.
-3. **Summary** (3 cols) — funnel totals, by-fit-tier, by-category, exclusion breakdown, methodology.
-It also appends this run's job ids to `state\master_jobs.jsonl` so the next run dedupes them out.
-
-Then close the session but keep the browser for reuse:
-```bash
-browser-act session close ljh
-```
+Detailed in `references/filter_rules.md`. Summary: >= N years (floor of ALL hard
+year clauses; every clause is preserved for Phase 7), senior titles (incl.
+AVP/SVP/EVP/Vice President), non-Singapore base/business, direct-sales/MLM patterns
+(incl. roadshow perk-bait titles and face-to-face-marketing copy), dead/closed/ghost
+listings (S1+S3), config blacklists, and optional contract/part-time drops driven by
+LinkedIn's structured Employment-type field first, header text second.
 
 ## Unattended / scheduled runs
 
-Manual invocation is the default. For hands-off recurrence, schedule a Claude session that
-invokes this skill (use the `schedule` skill / scheduled tasks). It runs with zero human
-input because (a) the browser already exists so no Confirmation Gate fires, and (b) it is
-read-only so anti-bot rarely triggers. Two guardrails for unattended mode: keep volume
-human-like (cap queries and scroll rounds in config), and on login-expiry fail loud in the
-report rather than hanging. Fit scoring still works unattended via the heuristic fallback,
-but agent scoring is better when a session is interactive.
+Schedule a session that invokes this skill with `scoring.mode: heuristic`, or let it
+halt at scoring and finish interactively later (`.done` markers keep the halt cheap).
+Keep volume human-like: the defaults (10-card pages, 1-2s jitter, 200-card query cap)
+matched a 673-detail run with zero 429s. On guest-probe failure the pipeline stops
+with a clear message rather than writing an empty sheet.
 
-## Troubleshooting (hard-won)
-- **0 cards / 0 detail text extracted** -> LinkedIn changed markup. The extractors lean on
-  stable signals (`/jobs/view/<id>` hrefs, `main` innerText) but verify `references/` and the
-  JS if a run returns empty; abort with a clear message rather than writing an empty sheet.
-- **`eval --stdin` returns nothing** -> you used PowerShell. Use Bash.
-- **UnicodeEncodeError / cp1252** -> add `PYTHONUTF8=1` and `encoding="utf-8"` (emojis show up
-  in company names and JDs).
-- **FileNotFoundError on `/c/...`** -> you passed an MSYS path to Python. Use a Windows path.
-- **Tool timeout mid detail-read** -> just re-run `read_details.sh`; it resumes.
-- **JD text belongs to a different company (crosstalk)** -> the SPA off-by-one read. The reader
-  settles (header stable across two reads) + verifies identity + bounces through a neutral page on
-  retry; `verify_details.py --delete` then re-fetches any that still slipped. If a single page
-  refuses to verify after retries it is left UNREAD (fail closed) — better a gap than a wrong JD.
+## Troubleshooting (field-tested)
+
+- **02_probe fails / guest pages empty** -> the guest endpoint moved or is blocked for
+  this network. Try `FIREFLY_DRIVER=direct` (if the shell has a proxy), or fetch
+  details via the browser fallback: `python scripts/fetch_details.py --config
+  config.yaml --run <RUN_DIR> --mode browser` (needs browser-harness; slow).
+- **429s / error statuses in raw_details.jsonl** -> the worker already backs off and
+  the pipeline's chunk loop re-fetches on the next pass; widen
+  `pipeline.detail_fetch_interval` if they persist.
+- **verify_details reports CORRUPT** -> a detail body doesn't match its id (browser
+  fallback race, or a guest anomaly). The gate deletes it; the details loop re-fetches
+  exactly those ids. If one id never verifies, it ships as a gap (no_detail), never
+  as a wrong JD.
+- **UnicodeEncodeError mentioning surrogates** -> a script piped into browser-harness
+  contains raw non-ASCII. Workers (`_*_worker.py`) must stay pure ASCII (`\uXXXX`
+  escapes); run everything with `PYTHONUTF8=1`.
+- **eval wrapper returns null from a .js file** -> the file must START with `(`;
+  leading `//` comments make generic eval wrappers swallow the IIFE's return value.
+- **Workbook rebuilt after a fix** -> safe: `build_xlsx.py` updates the master library
+  idempotently (first-seen wins) and `--date YYYY-MM-DD` keeps the original filename.
+- **Reset "already seen"** -> delete or trim `state/master_jobs.jsonl`.
 
 ## Reference files
-- `references/linkedin_params.md` — search URL params (geoId, f_E, f_TPR, sortBy).
-- `references/filter_rules.md` — exact years / Singapore / blacklist logic and the noise to ignore.
-- `references/v3_format.md` — the three-sheet layout, headers, fonts, fills, widths, Summary spec.
-- `config.yaml` — the only file the user normally edits (queries, filters, profile, paths).
+
+- `references/linkedin_params.md` — guest API endpoints (search paging + jobPosting
+  detail), URL params (geoId, f_E, f_TPR, sortBy), rate-limit field notes.
+- `references/filter_rules.md` — exact years / senior / Singapore / MLM logic and the
+  noise each rule must ignore.
+- `references/v3_format.md` — the three-sheet workbook layout and master-library
+  semantics.
+- `config.yaml` — the only file the user normally edits (queries, filters, profile,
+  paths, pipeline knobs).

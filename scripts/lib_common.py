@@ -102,16 +102,22 @@ def work_mode(card_loc):
 # year-number to an experience context, take the LOWER bound of any range, and use the smallest
 # hard requirement as the floor.
 _SKILLTAG = re.compile(r"•?\s*\d+\+?\s*years?\s*of work experience with[^•]*", re.I)
-_EXCL = re.compile(r"\b(contract|tenure|history|growth|anniversary|founded|established|spans|"
-                   r"hires|years old|aged)\b", re.I)
+# "growth" is only noise in the "<N> year growth" company-insight form; as a bare
+# word it killed real requirements like "8+ years in growth roles" (the DBS miss).
+_EXCL = re.compile(r"\b(contract|tenure|history|anniversary|founded|established|spans|"
+                   r"hires|years old|aged)\b|years?\s+growth", re.I)
 _SOFT = re.compile(r"\b(prefer\w*|nice to have|advantage|asset|bonus|ideally|a plus|would be)\b", re.I)
 _HARD = re.compile(r"minimum|at least|must|require", re.I)
 _YR = re.compile(r"(\d+)\s*(?:[-–—~～/]|to|and)?\s*(\d+)?\s*(\+)?\s*years?\b", re.I)
 
 
-def min_required_years(txt):
-    """Return (floor_years or None, evidence). Floor = smallest lower-bound across hard,
-    experience-tied year requirements; a range like '3-5 years' contributes its lower number."""
+def required_years_clauses(txt):
+    """ALL hard, experience-tied year requirements in the JD, as a sorted
+    [(low_bound, evidence), ...]. A range like '3-5 years' contributes its lower
+    number. min_required_years() takes the floor of these for the deterministic
+    gate; Phase 7 must read the FULL list, because stacked conjunctive
+    requirements ('3+ yrs product management AND 2+ yrs AI') hide behind the
+    lower number at the gate (the Hytech miss, 2026-07-02)."""
     s = re.sub(r"\s+", " ", txt or "")
     s = _SKILLTAG.sub(" ", s)
     out = []
@@ -131,13 +137,19 @@ def min_required_years(txt):
         if lo > 30:
             continue
         out.append((lo, s[max(0, m.start() - 15):m.end() + 22].strip()))
+    out.sort(key=lambda x: x[0])
+    return out
+
+
+def min_required_years(txt):
+    """Return (floor_years or None, evidence) - the gate's lenient lower bound."""
+    out = required_years_clauses(txt)
     if not out:
         return None, None
-    out.sort(key=lambda x: x[0])
     return out[0][0], out[0][1][:160]
 
 
-_SENIOR = re.compile(r"\b(senior|sr\.?|lead|principal|staff|director|vp|chief|head of)\b", re.I)
+_SENIOR = re.compile(r"\b(senior|sr\.?|lead|principal|staff|director|[ase]?vp|vice president|chief|head of)\b", re.I)
 
 
 def is_senior_title(title):
@@ -235,6 +247,14 @@ _FOREIGN_TAG = re.compile(r"\(hong kong\)|\bhong kong\b|\b-\s*my\b|\bmalaysia\b|
                           r"\bmanila\b|\bvietnam\b|\bthailand\b|\bindonesia\b|\beurope\b|\bchennai\b", re.I)
 
 
+def is_foreign_card(loc, title):
+    """Card-level foreign-market check (no JD available yet). Conservative: only a
+    positive foreign tag with no 'singapore' anywhere drops the card; ambiguous
+    cards go on to the detail read where is_singapore() decides with the JD."""
+    blob = f"{loc or ''} {title or ''}"
+    return bool(_FOREIGN_TAG.search(blob)) and "singapore" not in blob.lower()
+
+
 def is_singapore(loc, title, txt):
     lc = (loc or "").lower()
     if _FOREIGN_TAG.search(title or "") and "singapore" not in (title or "").lower():
@@ -253,12 +273,20 @@ _MLM_COPY = re.compile(
     r"invest in yourself|build the future you want|\bwarrior\b|uncapped commission|"
     r"commission only|no experience needed|training (is )?provided!!!|"
     r"sales (and|&) marketing representative|campaign marketing & sales|"
-    r"travelling opportunities|unlimited earning|be your own boss", re.I)
+    r"travelling opportunities|unlimited earning|be your own boss|"
+    r"face[- ]to[- ]face marketing|18 years old and above", re.I)
+# Roadshow bait: two perk words strung together in the TITLE itself
+# ("... (Gym membership/Mentorship/Travelling)"). Real employers list perks in the
+# benefits section, not the job title, so this stays narrow.
+_MLM_TITLE_BAIT = re.compile(
+    r"(gym membership|travell?ing|mentorship)\W{1,3}(gym membership|travell?ing|mentorship)", re.I)
 
 
 def is_direct_sales_mlm(company, title, txt):
     blob = f"{title}\n{txt}"
     if _MLM_COPY.search(blob):
+        return True
+    if _MLM_TITLE_BAIT.search(title or ""):
         return True
     if _MLM_COMPANY.search(company or ""):
         # company-name signal needs a sales/entry corroborator to avoid false positives
@@ -290,8 +318,18 @@ def is_blacklisted(company, title, companies=None, titles=None):
 
 # ---------- heuristic fit score (fallback when not agent-scored) ----------
 def keyword_overlap_score(jd, req, keywords):
+    """Whole-word keyword overlap. Substring matching let 2-letter keywords like
+    'PR' fire inside 'PRD'/'expression'/'April' and inflated every heuristic
+    score toward the cap, destroying the fallback ordering."""
     blob = f"{jd}\n{req}".lower()
-    hits = sorted({k for k in keywords if k.lower() in blob})
+    hits = set()
+    for k in keywords or []:
+        kl = (k or "").lower().strip()
+        if len(kl) < 3:
+            continue  # too short to mean anything as a whole word
+        if re.search(r"\b" + re.escape(kl) + r"\b", blob):
+            hits.add(k)
+    hits = sorted(hits)
     base = 60 + min(len(hits), 8) * 4          # 60..92
     return min(base, 95), hits
 
@@ -305,3 +343,20 @@ def write_json(obj, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(obj, f, ensure_ascii=False, indent=1)
+
+
+def merge_dropped(run_dir, stage, entries):
+    """dropped.json is shared by several pipeline stages (aggregate/prefilter/parse/
+    liveness). Each stage owns and REPLACES only its own entries, so any stage can be
+    re-run without duplicating drop records. Legacy entries without a stage field were
+    written by parse (the only historical writer) and are treated as parse's."""
+    path = os.path.join(run_dir, "dropped.json")
+    old = read_json(path) if os.path.exists(path) else []
+    kept = [d for d in old if (d.get("stage") or "parse") != stage]
+    out = []
+    for e in entries:
+        e = dict(e)
+        e["stage"] = stage
+        out.append(e)
+    write_json(kept + out, path)
+    return len(out)

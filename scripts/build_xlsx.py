@@ -48,14 +48,14 @@ for k in kept:
         rec.update(fit=s.get("fit") or tier(int(s.get("score", 70))),
                    score=int(s.get("score", 70)), why=s.get("why", ""),
                    watch=s.get("watch", ""), category=s.get("category") or k["category_guess"],
-                   industry=s.get("industry", ""))
+                   industry=s.get("industry") or k.get("industry_guess", ""))
     else:
         sc = int(k.get("heuristic_score", 65))
         rec = dict(k)
         rec.update(fit=tier(sc), score=sc,
                    why="Keyword overlap: " + ", ".join(k.get("kw_hits", [])[:6]),
                    watch="Auto-scored by keyword overlap; read the JD before applying.",
-                   category=k["category_guess"], industry="")
+                   category=k["category_guess"], industry=k.get("industry_guess", ""))
     recs.append(rec)
 
 recs.sort(key=lambda r: r["score"], reverse=True)
@@ -222,11 +222,33 @@ fname = f'{cfg["output"].get("basename","SG_LinkedIn_NewMatches")}_{today.isofor
 outpath = os.path.join(outdir, fname)
 wb.save(outpath)
 
+# Idempotent master update: merge by jid and rewrite atomically. A plain append
+# duplicated every id when the workbook was rebuilt (e.g. after a scoring fix).
+# First-seen semantics: an id already in the library keeps its original date.
 os.makedirs(os.path.dirname(MASTER), exist_ok=True)
-with open(MASTER, "a", encoding="utf-8") as f:
-    for r in recs:
-        f.write(json.dumps({"jid": r["jid"], "company": r["company"], "title": r["title"],
-                            "date": today.isoformat()}, ensure_ascii=False) + "\n")
+master = {}
+if os.path.exists(MASTER):
+    for line in open(MASTER, encoding="utf-8", errors="replace"):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            o = json.loads(line)
+        except Exception:
+            continue
+        if o.get("jid"):
+            master[str(o["jid"])] = o
+new_ids = 0
+for r in recs:
+    if str(r["jid"]) not in master:
+        master[str(r["jid"])] = {"jid": r["jid"], "company": r["company"],
+                                 "title": r["title"], "date": today.isoformat()}
+        new_ids += 1
+tmp = MASTER + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    for o in master.values():
+        f.write(json.dumps(o, ensure_ascii=False) + "\n")
+os.replace(tmp, MASTER)
 
 print(f"SAVED {outpath}")
-print(f"sheets: {wb.sheetnames}; rows: {len(recs)}; master appended: {len(recs)}")
+print(f"sheets: {wb.sheetnames}; rows: {len(recs)}; master: +{new_ids} new, {len(master)} total")

@@ -71,5 +71,7 @@ omitted (company size is not reliably scrapable, and the shortlist is small).
 
 ## Master dedupe library
 `state/master_jobs.jsonl` — one JSON object per surfaced job (`jid`, `company`, `title`, `date`).
-`build_xlsx.py` appends the final shortlist each run; `build_exclusion.py` reads it next run so a
-job is never surfaced twice. Delete or trim this file to reset what counts as "already seen".
+`build_xlsx.py` merges the final shortlist into it each run **idempotently** (first-seen wins,
+atomic rewrite), so rebuilding a workbook — e.g. after a scoring fix, with `--date` to keep the
+filename — never duplicates ids. `build_exclusion.py` reads it next run so a job is never
+surfaced twice. Delete or trim this file to reset what counts as "already seen".

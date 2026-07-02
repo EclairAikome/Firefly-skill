@@ -8,6 +8,7 @@ job just because the re-ping was flaky — only drop on a POSITIVE dead signal).
 import argparse, os, json, sys
 sys.path.insert(0, os.path.dirname(__file__))
 import lib_common as L
+from lib_common import merge_dropped
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--run", required=True)
@@ -35,10 +36,7 @@ for k in kept:
         survivors.append(k)
 
 L.write_json(survivors, out)
-dpath = os.path.join(run, "dropped.json")
-dropped = L.read_json(dpath) if os.path.exists(dpath) else []
-dropped += killed
-L.write_json(dropped, dpath)
+merge_dropped(run, "liveness", killed)
 
 from collections import Counter
 print(f"liveness re-check: kept {len(kept)} -> survivors {len(survivors)} "

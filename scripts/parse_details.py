@@ -1,14 +1,17 @@
-"""Parse every candidate's detail page, apply the hard rules, split kept vs dropped.
+"""Parse every candidate's detail file, apply the hard rules, split kept vs dropped.
 
 Hard rules (see references/filter_rules.md):
   - minimum required experience >= filters.max_years_exclusive  -> drop (years)
   - filters.require_singapore and not Singapore base/business    -> drop (location)
   - filters.drop_direct_sales_mlm and MLM/direct-sales pattern   -> drop (mlm)
-Kept jobs carry extracted jd/req/location/posted/work + a heuristic score for fallback.
+Kept jobs carry extracted jd/req/location/posted/work, LinkedIn's structured
+criteria, ALL year-requirement clauses (not just the floor - Phase 7 needs the
+full list to catch stacked requirements), and a heuristic score for fallback.
 """
 import argparse, os, re, json, sys
 sys.path.insert(0, os.path.dirname(__file__))
 import lib_common as L
+from lib_common import merge_dropped
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--config", required=True)
@@ -35,18 +38,31 @@ for t in (cfg.get("profile", {}).get("tracks", {}) or {}).values():
     all_kw += t.get("keywords", [])
 
 
-def load_txt(jid):
+def load_detail(jid):
+    """Return (txt, criteria) from the detail file, tolerating extractor noise."""
     p = os.path.join(run, "details", jid + ".json")
     if not os.path.exists(p):
-        return ""
+        return "", {}
     raw = open(p, encoding="utf-8", errors="replace").read().strip()
     m = re.search(r"\{.*\}", raw, re.S)
     if not m:
-        return ""
+        return "", {}
     try:
-        return json.loads(m.group(0)).get("txt", "")
+        obj = json.loads(m.group(0))
+        return obj.get("txt", ""), obj.get("criteria") or {}
     except Exception:
-        return ""
+        return "", {}
+
+
+# Requirements-block headings, matched at LINE START so the block begins at the
+# heading instead of mid-sentence (74/288 rows started lowercase mid-clause on
+# the 2026-07-02 run before this).
+_REQ_HEADING = re.compile(
+    r"(?im)^(requirements?|qualifications?|minimum qualifications?|"
+    r"what you(?:'|’)?ll need|what you need( to succeed)?|who you are|"
+    r"what we(?:'|’)re looking for|you (?:will )?bring|must[- ]haves?)\b")
+_REQ_INLINE = re.compile(
+    r"(Requirements|Qualifications|What (you|we)[^\n]{0,20}|Who you are|You have|Minimum)", re.I)
 
 
 def jd_and_req(txt):
@@ -62,16 +78,21 @@ def jd_and_req(txt):
         if j > 200:
             body = body[:j]
     body = re.sub(r"[ \t]+", " ", body).strip()
-    # Store the FULL description and FULL requirements (no artificial char cap that used to clip
-    # them mid-word). Excel's per-cell limit is 32767; 20000 is a safe ceiling for a real JD.
+    # Store the FULL description and FULL requirements. Excel's per-cell limit is
+    # 32767; 20000 is a safe ceiling for a real JD.
     CAP = 20000
     jd = body[:CAP]
-    mm = re.search(r"(Requirements|Qualifications|What (you|we)[^\n]{0,20}|Who you are|You have|Minimum)", body, re.I)
-    req = body[mm.start():mm.start() + CAP] if mm else jd[:1500]
-    return jd, re.sub(r"[ \t]+", " ", req).strip()
+    m = _REQ_HEADING.search(body)
+    if m:
+        return jd, re.sub(r"[ \t]+", " ", body[m.start():m.start() + CAP]).strip(), "heading"
+    mm = _REQ_INLINE.search(body)
+    if mm:
+        start = body.rfind("\n", 0, mm.start()) + 1   # align to the start of the line
+        return jd, re.sub(r"[ \t]+", " ", body[start:start + CAP]).strip(), "inline"
+    return jd, jd[:1500], "jd_head"
 
 
-def guess_category(title):
+def guess_category(title, criteria):
     t = (title or "").lower()
     if "product manager" in t or "product associate" in t or "product management" in t:
         return "Product Manager"
@@ -85,29 +106,43 @@ def guess_category(title):
         return "Influencer / Partnerships"
     if "community" in t:
         return "Community / Marketing"
-    if "pr" in t or "communications" in t:
+    if "analyst" in t or "analytics" in t or "data" in t:
+        return "Data / BI Analyst"
+    # whole-word "pr" — the old substring test classified "April ..." as PR
+    if "pr" in t.split() or "public relations" in t or "communications" in t:
         return "PR / Communications"
+    # LinkedIn's own Job function is a decent tiebreaker when the title says little
+    fn = (criteria.get("Job function") or "").lower()
+    if "product management" in fn:
+        return "Product Manager"
+    if "analyst" in fn or "information technology" in fn:
+        return "Data / BI Analyst"
     return "Digital Marketing"
 
 
 cands = {c["id"]: c for c in L.read_json(os.path.join(run, "candidates.json"))}
 kept, dropped = [], []
 for jid, c in cands.items():
-    txt = load_txt(jid)
+    txt, crit = load_detail(jid)
     if not txt:
         dropped.append({"jid": jid, "company": c["company"], "title": c["title"], "reason": "no_detail"})
         continue
-    # Defense in depth against the SPA off-by-one read: if the saved body does not actually
-    # describe this candidate, it captured a neighbouring job. Never emit that as this job's JD;
-    # drop it so verify_details.py / a re-read can recover it instead of shipping wrong data.
+    # Defense in depth against a wrong-body read: if the saved body does not actually
+    # describe this candidate, never emit it as this job's JD; drop it so
+    # verify_details.py / a re-fetch can recover it instead of shipping wrong data.
     if not L.identity_in_text(c["company"], c["title"], txt):
         dropped.append({"jid": jid, "company": c["company"], "title": c["title"], "reason": "corrupt_read"})
         continue
-    miny, ev = L.min_required_years(txt)
+    clauses = L.required_years_clauses(txt)
+    miny, ev = (clauses[0][0], clauses[0][1][:160]) if clauses else (None, None)
     sg = L.is_singapore(c.get("loc", ""), c["title"], txt)
     mlm = L.is_direct_sales_mlm(c["company"], c["title"], txt)
     status = L.listing_status(txt)
     blk = L.is_blacklisted(c["company"], c["title"], bl_companies, bl_titles)
+    # Employment type: LinkedIn's structured field first, header-text heuristic second
+    emp = (crit.get("Employment type") or "").lower()
+    contract_flag = emp in ("contract", "temporary") or L.is_contract(c["title"], txt)
+    part_flag = emp == "part-time" or L.is_part_time(c["title"], txt)
     reason = None
     # S1/S3 (highest priority): a dead or ghost listing is worthless however well it fits.
     if drop_removed and status == "removed":
@@ -121,9 +156,9 @@ for jid, c in cands.items():
         reason = f"years>={maxy} ({ev})"
     elif L.is_senior_title(c["title"]):
         reason = "senior_title"
-    elif drop_contract and L.is_contract(c["title"], txt):
+    elif drop_contract and contract_flag:
         reason = "contract"
-    elif drop_part and L.is_part_time(c["title"], txt):
+    elif drop_part and part_flag:
         reason = "part_time"
     elif req_sg and not sg:
         reason = "not_singapore"
@@ -133,19 +168,24 @@ for jid, c in cands.items():
         dropped.append({"jid": jid, "company": c["company"], "title": c["title"], "reason": reason})
         continue
     _, pstr = L.rel_to_abs_date(L.loc_line(txt))
-    jd, rq = jd_and_req(txt)
+    jd, rq, rq_src = jd_and_req(txt)
     hscore, hits = L.keyword_overlap_score(jd, rq, all_kw)
     kept.append({
         "jid": jid, "company": c["company"], "title": c["title"],
         "location": L.clean_loc(c.get("loc", "")), "work": L.work_mode(c.get("loc", "")),
         "posted": pstr, "link": f"https://www.linkedin.com/jobs/view/{jid}/",
-        "jd": jd, "req": rq, "min_years": miny,
-        "category_guess": guess_category(c["title"]),
+        "jd": jd, "req": rq, "req_source": rq_src,
+        "min_years": miny,
+        "years_clauses": [[y, e[:120]] for y, e in clauses],
+        "employment_type": crit.get("Employment type", ""),
+        "seniority_label": crit.get("Seniority level", ""),
+        "industry_guess": crit.get("Industries", ""),
+        "category_guess": guess_category(c["title"], crit),
         "heuristic_score": hscore, "kw_hits": hits,
     })
 
 L.write_json(kept, out)
-L.write_json(dropped, os.path.join(run, "dropped.json"))
+merge_dropped(run, "parse", dropped)
 from collections import Counter
 rc = Counter(re.split(r"[ (]", d["reason"])[0] for d in dropped)
 print(f"read {len(cands)} -> kept {len(kept)} -> dropped {len(dropped)} {dict(rc)}")

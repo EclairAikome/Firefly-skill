@@ -20,7 +20,7 @@ Firefly does that whole loop while you do something else.
 
 ## What it does
 
-- **Reads every job's full description.** It clicks "see more" on each posting, so the years-of-experience and location filters are based on the real text, not a truncated preview.
+- **Reads every job's full description.** Every posting's complete text is fetched (via LinkedIn's guest API, with a browser fallback that clicks "see more"), so the years-of-experience and location filters are based on the real text, not a truncated preview.
 - **Throws out the time-wasters.** Roles asking for more years than you have, jobs outside your target location, disguised direct-sales / MLM postings, and anything you already applied to. It remembers past runs, so the same job never shows up twice.
 - **Ranks by fit.** It scores each role against your background and writes a clean Excel workbook, sorted best-match first, with three tabs: the full job list, a fit ranking with "why it fits / watch-outs", and a summary.
 - **Never touches your account.** Read-only by design. It browses, it does not apply, so it will not trip captchas or do anything risky. Applying is a separate job.
@@ -31,7 +31,7 @@ In a head-to-head benchmark, Firefly produced correct, complete shortlists **94.
 ## Requirements
 
 - [Claude Code](https://claude.com/claude-code)
-- [browser-act](https://github.com/browser-act/skills) for logged-in browsing
+- A running Chrome logged in to LinkedIn, driven by ONE of: [browser-harness](https://github.com/browser-use/browser-harness) (default), [browser-act](https://github.com/browser-act/skills), or direct connectivity to linkedin.com (`direct` driver)
 - Python 3.12+ with [uv](https://github.com/astral-sh/uv)
 
 ## Install
@@ -61,7 +61,7 @@ MIT. See [LICENSE](LICENSE).
 
 ## 它做什么
 
-- **读每个岗位的完整 JD。** 它会点开每条岗位的"see more"，所以经验年限和地点的筛选依据的是全文，而不是被截断的预览。
+- **读每个岗位的完整 JD。** 每条岗位的全文都会被抓取（走 LinkedIn guest API，浏览器兜底方案会点"see more"），所以经验年限和地点的筛选依据的是全文，而不是被截断的预览。
 - **扔掉浪费时间的。** 要求年限超过你的、不在目标城市的、伪装成营销的直销/拉人头岗、以及你已经投过的。它记得历次跑过的结果，同一个岗位不会出现第二次。
 - **按匹配度排序。** 它把每个岗位对照你的背景打分，导出一份干净的 Excel，最匹配的排在最前，含三个子表：完整岗位清单、带"为什么适合/注意点"的匹配排名、以及汇总。
 - **绝不碰你的账号。** 设计上就是只读。它只浏览，不投递，所以不会触发验证码、不会做任何有风险的操作。投递是另一回事。
@@ -72,7 +72,7 @@ MIT. See [LICENSE](LICENSE).
 ## 依赖
 
 - [Claude Code](https://claude.com/claude-code)
-- [browser-act](https://github.com/browser-act/skills)（带登录态浏览）
+- 一个已登录 LinkedIn 的 Chrome，由以下任一驱动：[browser-harness](https://github.com/browser-use/browser-harness)（默认）、[browser-act](https://github.com/browser-act/skills)、或可直连 linkedin.com（`direct` 驱动）
 - Python 3.12+ 和 [uv](https://github.com/astral-sh/uv)
 
 ## 安装

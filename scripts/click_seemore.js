@@ -1,9 +1,10 @@
-// Expand the collapsed job description on a LinkedIn detail page BEFORE reading it.
-// LinkedIn hides the overflow of the JD behind a "… more" / "see more" toggle, and the
-// hidden text is NOT in `main.innerText` until the toggle is clicked. Without this the JD
-// and Key Requirements come out truncated (ending in "… more"). Click, then read on the
-// next eval (after a wait) so React has re-rendered the expanded text.
 (() => {
+  // Expand the collapsed job description on a LinkedIn detail page BEFORE reading it.
+  // LinkedIn hides the JD overflow behind a "… more" / "see more" toggle, and the hidden
+  // text is NOT in `main.innerText` until the toggle is clicked. Without this the JD and
+  // Key Requirements come out truncated (ending in "… more"). Click, then read on the
+  // next eval (after a wait) so React has re-rendered the expanded text.
+  // NOTE: file must START with "(" — a leading comment makes eval wrappers return null.
   let n = 0;
   document.querySelectorAll(
     'button.jobs-description__footer-button, button[aria-label*="see more description" i], ' +
